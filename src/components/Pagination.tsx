@@ -9,6 +9,11 @@ const Pagination: React.FC<PaginationProps> = ({
   totalPages,
   onPageChange,
 }) => {
+  // Don't show pagination if there's only 1 page or no pages
+  if (totalPages <= 1) {
+    return null;
+  }
+
   const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
 
   return (

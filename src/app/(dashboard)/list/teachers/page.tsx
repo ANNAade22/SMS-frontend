@@ -3,147 +3,268 @@ import FormModal from "@/components/FormModal";
 import Pagination from "@/components/Pagination";
 import Table from "@/components/Table";
 import TableSearch from "@/components/TableSearch";
-import { role } from "@/lib/data";
+import { role, teachersData, classesData } from "@/lib/data";
 import Image from "next/image";
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useState, useEffect, useRef } from "react";
+import { useDebounce } from "@/hooks/useDebounce";
 import { useRouter, useSearchParams } from "next/navigation";
 
+type Teacher = {
+  _id?: string;
+  id?: number;
+  name: string;
+  email?: string;
+  phone: string;
+  address: string;
+  subjects: Array<{ _id: string; name: string }> | string[];
+  classes: Array<{ _id: string; name: string }> | string[];
+};
+
+type Class = {
+  _id?: string;
+  id?: number;
+  name: string;
+  capacity?: number;
+  grade?: number;
+  supervisor?: string;
+};
+
 const columns = [
-  { header: "Info", accessor: "info" },
   {
-    header: "Teacher ID",
-    accessor: "teacherId",
-    className: "hidden md:table-cell",
+    header: "Teacher Info",
+    accessor: "info",
+    sortKey: "name",
   },
   {
     header: "Subjects",
     accessor: "subjects",
     className: "hidden md:table-cell",
   },
-  { header: "Classes", accessor: "classes", className: "hidden md:table-cell" },
-  { header: "Phone", accessor: "phone", className: "hidden lg:table-cell" },
-  { header: "Address", accessor: "address", className: "hidden lg:table-cell" },
-  { header: "Actions", accessor: "action" },
+  {
+    header: "Classes",
+    accessor: "classes",
+    className: "hidden md:table-cell",
+  },
+  {
+    header: "Contact",
+    accessor: "contact",
+    className: "hidden lg:table-cell",
+    sortKey: "phone",
+  },
+  {
+    header: "Actions",
+    accessor: "action",
+  },
 ];
 
-interface TeacherItem {
-  id: string;
-  name: string;
-  surname: string;
-  email: string;
-  photo?: string;
-  userId: { _id: string; username: string };
-  subjects: { _id: string; name: string }[];
-  classes: { _id: string; name: string }[];
-  phone: string;
-  address: string;
-}
-
-type ClassType = { _id: string; name: string };
-
-const limit = 6;
-
 const TeacherListPage = () => {
-  const searchParams = useSearchParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const currentPage = Number(searchParams.get("page")) || 1;
-  const sort = searchParams.get("sort") || "name";
-  const classId = searchParams.get("classId") || "";
-
-  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [classes, setClasses] = useState<ClassType[]>([]);
-  const [totalPages, setTotalPages] = useState(1);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [classes, setClasses] = useState<Class[]>([]);
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [sortField, setSortField] = useState(
+    searchParams.get("sort")?.split(":")[0] || "name"
+  );
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">(
+    (searchParams.get("sort")?.split(":")[1] as "asc" | "desc") || "asc"
+  );
+  const [selectedClass, setSelectedClass] = useState(
+    searchParams.get("class") || ""
+  );
   const [showFilter, setShowFilter] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [page, setPage] = useState(parseInt(searchParams.get("page") || "1"));
+  const [totalPages, setTotalPages] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+  const filterRef = useRef<HTMLDivElement>(null);
 
-  const fetchData = async () => {
-    try {
-      // Get classes
-      const classRes = await axios.get("http://127.0.0.1:8000/api/v1/classes");
-      setClasses(classRes.data?.data?.data || []);
+  const debouncedSearch = useDebounce(search, 500);
 
-      // Get teachers
-      const query = new URLSearchParams({
-        page: currentPage.toString(),
-        limit: limit.toString(),
-      });
+  // Update URL when filters change
+  const updateURL = (newParams: Record<string, string>) => {
+    const params = new URLSearchParams(searchParams.toString());
 
-      if (sort) query.set("sort", sort);
-      if (classId) query.set("classId", classId);
+    Object.entries(newParams).forEach(([key, value]) => {
+      if (value) {
+        params.set(key, value);
+      } else {
+        params.delete(key);
+      }
+    });
 
-      const response = await axios.get(
-        `http://127.0.0.1:8000/api/v1/teachers?${query.toString()}`
-      );
-      const teachersArray = response.data?.data?.data || [];
-      const total = response.data.total || response.data.results || 0;
-
-      setTeachers(teachersArray);
-      setTotalPages(Math.ceil(total / limit));
-    } catch (error) {
-      console.error("Error fetching teachers:", error);
-    }
+    const newURL = `/list/teachers${
+      params.toString() ? `?${params.toString()}` : ""
+    }`;
+    router.push(newURL, { scroll: false });
   };
 
+  // Fetch classes for filter dropdown
   useEffect(() => {
-    fetchData();
-  }, [searchParams]);
+    const fetchClasses = async () => {
+      try {
+        setClassesLoading(true);
+        const res = await fetch("http://127.0.0.1:8000/api/v1/classes");
 
-  const handlePageChange = (page: number) => {
-    const params = new URLSearchParams(searchParams);
-    params.set("page", page.toString());
-    router.push(`?${params.toString()}`, { scroll: false });
-  };
+        if (!res.ok) {
+          throw new Error("Failed to fetch classes");
+        }
 
-  const renderRow = (item: TeacherItem) => (
+        const data = await res.json();
+
+        if (data.status === "error") {
+          throw new Error(data.message);
+        }
+
+        const classesData = data.data?.data || data.data || [];
+        setClasses(classesData);
+      } catch (error) {
+        console.error("Error fetching classes:", error);
+        // Use mock data as fallback
+        setClasses(classesData);
+      } finally {
+        setClassesLoading(false);
+      }
+    };
+
+    fetchClasses();
+  }, []);
+
+  // Fetch teachers with filters
+  useEffect(() => {
+    const fetchTeachers = async () => {
+      try {
+        setError(null);
+        setLoading(true);
+
+        const params = new URLSearchParams({
+          page: page.toString(),
+          limit: "10",
+          sort: `${sortField}:${sortOrder}`,
+          ...(debouncedSearch && { search: debouncedSearch }),
+          ...(selectedClass && { classes: selectedClass }),
+        });
+
+        // Update URL with current filters
+        updateURL({
+          page: page.toString(),
+          sort: `${sortField}:${sortOrder}`,
+          search: debouncedSearch,
+          class: selectedClass,
+        });
+
+        const url = `http://127.0.0.1:8000/api/v1/teachers?${params}`;
+        // console.log("🔍 Fetching teachers from:", url);
+
+        const res = await fetch(url);
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch teachers");
+        }
+
+        const data = await res.json();
+
+        if (data.status === "error") {
+          throw new Error(data.message);
+        }
+
+        // Handle the nested data structure from backend
+        const teachersData = data.data?.data || data.data || [];
+        setTeachers(teachersData);
+
+        // Calculate total pages based on the limit used in the request
+        const limit = 10;
+        setTotalPages(Math.ceil((data.total || teachersData.length) / limit));
+
+        // console.log("📊 API Response:", {
+        //   total: data.total,
+        //   results: data.results,
+        //   teachersCount: teachersData.length,
+        //   totalPages: Math.ceil((data.total || teachersData.length) / limit),
+        // });
+
+        // If no data from API, use mock data for development
+        if (teachersData.length === 0) {
+          console.log("No teachers data from API, using mock data");
+          setTeachers(teachersData); // This will be empty, but you can add mock data here if needed
+        }
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "An error occurred");
+        console.error("Error fetching teachers:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTeachers();
+  }, [debouncedSearch, selectedClass, sortField, sortOrder, page]);
+
+  // Close filter when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        filterRef.current &&
+        !filterRef.current.contains(event.target as Node)
+      ) {
+        setShowFilter(false);
+      }
+    };
+
+    if (showFilter) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showFilter]);
+
+  const renderRow = (item: Teacher) => (
     <tr
-      key={item.id}
+      key={item._id || item.id}
       className="border-b border-gray-200 even:bg-slate-50 text-sm hover:bg-lamaPurpleLight"
     >
       <td className="flex items-center gap-4 p-4">
-        <Image
-          src={item?.photo || "/avatar.png"}
-          alt=""
-          width={40}
-          height={40}
-          className="md:hidden xl:block w-10 h-10 rounded-full object-cover"
-        />
         <div className="flex flex-col">
           <h3 className="font-semibold">{item.name}</h3>
-          <p className="text-xs text-gray-500">{item?.email}</p>
+          <p className="text-xs text-gray-500">{item.email}</p>
         </div>
       </td>
-      <td className="hidden md:table-cell">{item.userId.username}</td>
       <td className="hidden md:table-cell">
-        {item.subjects?.map((subject: any) => subject.name).join(", ") ||
-          "No subjects"}
+        {Array.isArray(item.subjects)
+          ? item.subjects
+              .map((subject) =>
+                typeof subject === "string" ? subject : subject.name
+              )
+              .join(", ")
+          : "No subjects"}
       </td>
       <td className="hidden md:table-cell">
-        {item.classes && item.classes.length > 0 ? (
-          item.classes.map((cls) => (
-            <span
-              key={cls._id}
-              className="inline-block mr-2 bg-gray-100 text-gray-800 text-sm px-2 py-1 rounded"
-            >
-              {cls.name}
-            </span>
-          ))
-        ) : (
-          <span className="text-gray-500 italic">No classes assigned</span>
-        )}
+        {Array.isArray(item.classes)
+          ? item.classes
+              .map((cls) => (typeof cls === "string" ? cls : cls.name))
+              .join(", ")
+          : "No classes"}
       </td>
-      <td className="hidden md:table-cell">{item.phone}</td>
-      <td className="hidden md:table-cell">{item.address}</td>
+      <td className="hidden lg:table-cell">
+        <div className="flex flex-col text-sm">
+          <span>{item.phone}</span>
+          <span className="text-gray-500">{item.address}</span>
+        </div>
+      </td>
       <td>
         <div className="flex items-center gap-2">
-          <Link href={`/list/teachers/${item.id}`}>
-            <button className="w-7 h-7 flex items-center justify-center rounded-full bg-lamaSky">
-              <Image src="/view.png" alt="" width={16} height={16} />
-            </button>
-          </Link>
           {role === "admin" && (
-            <FormModal table="teacher" type="delete" id={item.id} />
+            <>
+              <FormModal table="teacher" type="update" data={item} />
+              <FormModal
+                table="teacher"
+                type="delete"
+                id={item._id || item.id?.toString()}
+              />
+            </>
           )}
         </div>
       </td>
@@ -156,69 +277,101 @@ const TeacherListPage = () => {
       <div className="flex items-center justify-between">
         <h1 className="hidden md:block text-lg font-semibold">All Teachers</h1>
         <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
-          <TableSearch />
-          <div className="flex items-center gap-4 self-end">
-            <div className="relative">
-              {/* Filter */}
+          <div className="flex items-center gap-4 self-end relative">
+            <div className="relative" ref={filterRef}>
               <button
-                onClick={() => setShowFilter((prev) => !prev)}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow"
+                onClick={() => setShowFilter(!showFilter)}
               >
                 <Image src="/filter.png" alt="" width={14} height={14} />
               </button>
+
               {showFilter && (
-                <div className="absolute mt-2 z-50 bg-white border rounded-md shadow-md p-2">
-                  <select
-                    className="p-2 border rounded"
-                    onChange={(e) => {
-                      const selectedClassId = e.target.value;
-                      const params = new URLSearchParams(searchParams);
-                      if (selectedClassId) {
-                        params.set("classId", selectedClassId);
-                      } else {
-                        params.delete("classId");
-                      }
-                      params.set("page", "1");
-                      router.push(`?${params.toString()}`);
-                    }}
-                  >
-                    <option value="">All Classes</option>
-                    {classes.map((cls) => (
-                      <option key={cls._id} value={cls._id}>
-                        {cls.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 border">
+                  <div className="p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold">Filter by Class</h3>
+                      <button
+                        onClick={() => setShowFilter(false)}
+                        className="text-gray-400 hover:text-gray-600 text-lg font-bold"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <select
+                      value={selectedClass}
+                      onChange={(e) => {
+                        const newClass = e.target.value;
+                        setSelectedClass(newClass);
+                        setShowFilter(false); // Close filter after selection
+                        setPage(1); // Reset to first page when filtering
+                      }}
+                      className="w-full p-2 border rounded"
+                      disabled={classesLoading}
+                    >
+                      <option value="">All Classes</option>
+                      {classesLoading ? (
+                        <option value="" disabled>
+                          Loading classes...
+                        </option>
+                      ) : (
+                        classes.map((cls) => (
+                          <option key={cls._id || cls.id} value={cls.name}>
+                            {cls.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
                 </div>
               )}
             </div>
-            {/* Sort */}
+
             <button
               className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow"
-              onClick={() => {
-                const params = new URLSearchParams(searchParams);
-                const currentSort = params.get("sort");
-                const newSort = currentSort === "name" ? "-name" : "name";
-                params.set("sort", newSort);
-                params.set("page", "1");
-                router.push(`?${params.toString()}`);
-              }}
+              onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
             >
-              <Image src="/sort.png" alt="Sort" width={14} height={14} />
+              <Image src="/sort.png" alt="" width={14} height={14} />
             </button>
+
             {role === "admin" && <FormModal table="teacher" type="create" />}
           </div>
+
+          <TableSearch
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1); // Reset to first page when searching
+            }}
+          />
         </div>
       </div>
 
       {/* LIST */}
-      <Table columns={columns} renderRow={renderRow} data={teachers} />
+      {loading ? (
+        <div className="flex justify-center p-4">Loading...</div>
+      ) : error ? (
+        <div className="flex justify-center p-4 text-red-500">{error}</div>
+      ) : (
+        <Table
+          columns={columns}
+          renderRow={renderRow}
+          data={teachers}
+          onSort={(field) => {
+            if (field) {
+              setSortField(field);
+              setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+              setPage(1); // Reset to first page when sorting
+            }
+          }}
+        />
+      )}
 
       {/* PAGINATION */}
       <Pagination
-        currentPage={currentPage}
+        currentPage={page}
         totalPages={totalPages}
-        onPageChange={handlePageChange}
+        onPageChange={setPage}
       />
     </div>
   );
