@@ -8,14 +8,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { useRouter } from "next/navigation";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const columns = [
-  {
-    header: "Info",
-    accessor: "info",
-  },
+  { header: "Info", accessor: "info" },
   {
     header: "Teacher ID",
     accessor: "teacherId",
@@ -26,41 +22,11 @@ const columns = [
     accessor: "subjects",
     className: "hidden md:table-cell",
   },
-  {
-    header: "Classes",
-    accessor: "classes",
-    className: "hidden md:table-cell",
-  },
-  {
-    header: "Phone",
-    accessor: "phone",
-    className: "hidden lg:table-cell",
-  },
-  {
-    header: "Address",
-    accessor: "address",
-    className: "hidden lg:table-cell",
-  },
-  {
-    header: "Actions",
-    accessor: "action",
-  },
+  { header: "Classes", accessor: "classes", className: "hidden md:table-cell" },
+  { header: "Phone", accessor: "phone", className: "hidden lg:table-cell" },
+  { header: "Address", accessor: "address", className: "hidden lg:table-cell" },
+  { header: "Actions", accessor: "action" },
 ];
-
-// interface Subject {
-//   _id: string;
-//   name: string;
-// }
-
-// interface Class {
-//   _id: string;
-//   name: string;
-// }
-
-// interface User {
-//   _id: string;
-//   username: string;
-// }
 
 interface TeacherItem {
   id: string;
@@ -68,53 +34,67 @@ interface TeacherItem {
   surname: string;
   email: string;
   photo?: string;
-  userId: {
-    _id: string;
-    username: string;
-  };
-  subjects: {
-    _id: string;
-    name: string;
-  }[];
-  classes: {
-    _id: string;
-    name: string;
-  }[];
+  userId: { _id: string; username: string };
+  subjects: { _id: string; name: string }[];
+  classes: { _id: string; name: string }[];
   phone: string;
   address: string;
 }
 
+type ClassType = { _id: string; name: string };
+
+const limit = 6;
+
 const TeacherListPage = () => {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [teachers, setTeachers] = useState([]);
-  const initialPage = Number(searchParams.get("page")) || 1;
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1); // total pages
 
-  const limit = 8;
-  const handlePageChange = (page: number) => {
-    setCurrentPage(page);
-    router.push(`?page=${page}`, { scroll: false });
+  const currentPage = Number(searchParams.get("page")) || 1;
+  const sort = searchParams.get("sort") || "name";
+  const classId = searchParams.get("classId") || "";
+
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [classes, setClasses] = useState<ClassType[]>([]);
+  const [totalPages, setTotalPages] = useState(1);
+  const [showFilter, setShowFilter] = useState(false);
+
+  const fetchData = async () => {
+    try {
+      // Get classes
+      const classRes = await axios.get("http://127.0.0.1:8000/api/v1/classes");
+      setClasses(classRes.data?.data?.data || []);
+
+      // Get teachers
+      const query = new URLSearchParams({
+        page: currentPage.toString(),
+        limit: limit.toString(),
+      });
+
+      if (sort) query.set("sort", sort);
+      if (classId) query.set("classId", classId);
+
+      const response = await axios.get(
+        `http://127.0.0.1:8000/api/v1/teachers?${query.toString()}`
+      );
+      const teachersArray = response.data?.data?.data || [];
+      const total = response.data.total || response.data.results || 0;
+
+      setTeachers(teachersArray);
+      setTotalPages(Math.ceil(total / limit));
+    } catch (error) {
+      console.error("Error fetching teachers:", error);
+    }
   };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await axios.get(
-          `http://127.0.0.1:8000/api/v1/teachers?page=${currentPage}&limit=${limit}`
-        );
-        const teachersArray = response.data?.data?.data || [];
-        console.log("Fetched teachers:", teachersArray);
-        setTeachers(teachersArray);
-        const total = response.data.total || response.data.results;
-        setTotalPages(Math.ceil(total / limit));
-        router.replace(`?page=${currentPage}`, { scroll: false });
-      } catch (error) {
-        console.log("Error while fatching", error);
-      }
-    };
     fetchData();
-  }, [currentPage]);
+  }, [searchParams]);
+
+  const handlePageChange = (page: number) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("page", page.toString());
+    router.push(`?${params.toString()}`, { scroll: false });
+  };
 
   const renderRow = (item: TeacherItem) => (
     <tr
@@ -136,12 +116,22 @@ const TeacherListPage = () => {
       </td>
       <td className="hidden md:table-cell">{item.userId.username}</td>
       <td className="hidden md:table-cell">
-        {" "}
         {item.subjects?.map((subject: any) => subject.name).join(", ") ||
           "No subjects"}
       </td>
       <td className="hidden md:table-cell">
-        {item.classes.map((cls: any) => cls.name).join(", ")}
+        {item.classes && item.classes.length > 0 ? (
+          item.classes.map((cls) => (
+            <span
+              key={cls._id}
+              className="inline-block mr-2 bg-gray-100 text-gray-800 text-sm px-2 py-1 rounded"
+            >
+              {cls.name}
+            </span>
+          ))
+        ) : (
+          <span className="text-gray-500 italic">No classes assigned</span>
+        )}
       </td>
       <td className="hidden md:table-cell">{item.phone}</td>
       <td className="hidden md:table-cell">{item.address}</td>
@@ -168,11 +158,53 @@ const TeacherListPage = () => {
         <div className="flex flex-col md:flex-row items-center gap-4 w-full md:w-auto">
           <TableSearch />
           <div className="flex items-center gap-4 self-end">
-            <button className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow">
-              <Image src="/filter.png" alt="" width={14} height={14} />
-            </button>
-            <button className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow">
-              <Image src="/sort.png" alt="" width={14} height={14} />
+            <div className="relative">
+              {/* Filter */}
+              <button
+                onClick={() => setShowFilter((prev) => !prev)}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow"
+              >
+                <Image src="/filter.png" alt="" width={14} height={14} />
+              </button>
+              {showFilter && (
+                <div className="absolute mt-2 z-50 bg-white border rounded-md shadow-md p-2">
+                  <select
+                    className="p-2 border rounded"
+                    onChange={(e) => {
+                      const selectedClassId = e.target.value;
+                      const params = new URLSearchParams(searchParams);
+                      if (selectedClassId) {
+                        params.set("classId", selectedClassId);
+                      } else {
+                        params.delete("classId");
+                      }
+                      params.set("page", "1");
+                      router.push(`?${params.toString()}`);
+                    }}
+                  >
+                    <option value="">All Classes</option>
+                    {classes.map((cls) => (
+                      <option key={cls._id} value={cls._id}>
+                        {cls.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            {/* Sort */}
+            <button
+              className="w-8 h-8 flex items-center justify-center rounded-full bg-lamaYellow"
+              onClick={() => {
+                const params = new URLSearchParams(searchParams);
+                const currentSort = params.get("sort");
+                const newSort = currentSort === "name" ? "-name" : "name";
+                params.set("sort", newSort);
+                params.set("page", "1");
+                router.push(`?${params.toString()}`);
+              }}
+            >
+              <Image src="/sort.png" alt="Sort" width={14} height={14} />
             </button>
             {role === "admin" && <FormModal table="teacher" type="create" />}
           </div>
